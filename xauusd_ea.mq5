@@ -1,99 +1,98 @@
 //+------------------------------------------------------------------+
-//| Expert Advisor: XAUUSD Auto Trading EA                          |
-//| Deskripsi: EA untuk trading XAUUSD dengan ADX, RSI, MA          |
+//| EA XAUUSD dengan Lot Berdasarkan Equity                        |
 //+------------------------------------------------------------------+
-#include <Trade\Trade.mqh>  // Library trading
-CTrade trade;               // Objek trading
+#include <Trade\Trade.mqh>
+CTrade trade;
 
 // === INPUT PARAMETER ===
-input double LotSize = 0.1;           // Ukuran lot default
-input double RiskPerTrade = 2;        // Risiko per trade dalam persen
-input int ADX_Period = 14;            // Periode ADX
-input double ADX_Threshold = 25;      // Batas ADX untuk tren kuat
-input int RSI_Period = 14;            // Periode RSI
-input int RSI_Buy_Level = 70;         // Level overbought untuk sell
-input int RSI_Sell_Level = 30;        // Level oversold untuk buy
-input int MA_Short = 35;              // MA cepat (35)
-input int MA_Long = 82;               // MA lambat (82)
-input int ATR_Period = 14;            // Periode ATR untuk Stop Loss
-input bool UseTrailingStop = true;    // Gunakan trailing stop?
-input bool UseBreakEven = true;       // Gunakan break-even stop?
-input bool UseHedging = false;        // Aktifkan mode hedging?
-input double MaxDrawdown = 10;        // Maksimal drawdown (%) sebelum EA berhenti
+input double RiskPercent = 2.0;  // Risiko per trade dalam persen
+input int ADX_Period = 14;
+input double ADX_Threshold = 25;
+input int RSI_Period = 14;
+input int RSI_Buy_Level = 70;
+input int RSI_Sell_Level = 30;
+input int MA_Short = 35;
+input int MA_Long = 82;
+input int ATR_Period = 14;
+input double MaxDrawdown = 10;
+input int ConfirmationTimeframe = PERIOD_H1; // Konfirmasi dari H1
 
-// Variabel Global
-double adx, rsi, maShort, maLong, atr;
 double AccountStartBalance;
 
 //+------------------------------------------------------------------+
-//| Fungsi untuk mendapatkan nilai indikator                        |
+//| Fungsi untuk mendapatkan nilai indikator di Timeframe tertentu |
 //+------------------------------------------------------------------+
-void GetIndicators() {
-   adx = iADX(Symbol(), PERIOD_M15, ADX_Period, PRICE_CLOSE, MODE_MAIN, 0);
-   rsi = iRSI(Symbol(), PERIOD_M15, RSI_Period, PRICE_CLOSE, 0);
-   maShort = iMA(Symbol(), PERIOD_M15, MA_Short, 0, MODE_SMA, PRICE_CLOSE, 0);
-   maLong = iMA(Symbol(), PERIOD_M15, MA_Long, 0, MODE_SMA, PRICE_CLOSE, 0);
-   atr = iATR(Symbol(), PERIOD_M15, ATR_Period, 0);
+double GetIndicatorValue(string type, ENUM_TIMEFRAMES tf) {
+   if (type == "ADX") return iADX(Symbol(), tf, ADX_Period, PRICE_CLOSE, MODE_MAIN, 0);
+   if (type == "RSI") return iRSI(Symbol(), tf, RSI_Period, PRICE_CLOSE, 0);
+   if (type == "MA_Short") return iMA(Symbol(), tf, MA_Short, 0, MODE_SMA, PRICE_CLOSE, 0);
+   if (type == "MA_Long") return iMA(Symbol(), tf, MA_Long, 0, MODE_SMA, PRICE_CLOSE, 0);
+   if (type == "ATR") return iATR(Symbol(), tf, ATR_Period, 0);
+   return 0;
 }
 
 //+------------------------------------------------------------------+
-//| Fungsi untuk mengecek sinyal BUY                                 |
+//| Fungsi untuk menghitung Lot berdasarkan Equity                  |
+//+------------------------------------------------------------------+
+double CalculateLotSize(double sl) {
+   double equity = AccountEquity();
+   double riskAmount = (equity * RiskPercent) / 100.0;
+   double tickValue = SymbolInfoDouble(Symbol(), SYMBOL_TRADE_TICK_VALUE);
+   double lotSize = riskAmount / (sl * tickValue);
+   return NormalizeDouble(lotSize, 2);  // Membulatkan lot size ke 2 desimal
+}
+
+//+------------------------------------------------------------------+
+//| Fungsi untuk mengecek sinyal BUY & konfirmasi H1                |
 //+------------------------------------------------------------------+
 bool CheckBuySignal() {
-   return (adx > ADX_Threshold && rsi < RSI_Buy_Level && maShort > maLong && (maShort - maLong) * Point >= 200 * Point);
+   double adxM15 = GetIndicatorValue("ADX", PERIOD_M15);
+   double rsiM15 = GetIndicatorValue("RSI", PERIOD_M15);
+   double maShortM15 = GetIndicatorValue("MA_Short", PERIOD_M15);
+   double maLongM15 = GetIndicatorValue("MA_Long", PERIOD_M15);
+
+   double maShortH1 = GetIndicatorValue("MA_Short", PERIOD_H1);
+   double maLongH1 = GetIndicatorValue("MA_Long", PERIOD_H1);
+
+   return (adxM15 > ADX_Threshold && rsiM15 < RSI_Sell_Level && 
+           maShortM15 > maLongM15 && maShortH1 > maLongH1);
 }
 
 //+------------------------------------------------------------------+
-//| Fungsi untuk mengecek sinyal SELL                                |
+//| Fungsi untuk mengecek sinyal SELL & konfirmasi H1               |
 //+------------------------------------------------------------------+
 bool CheckSellSignal() {
-   return (adx > ADX_Threshold && rsi > RSI_Sell_Level && maShort < maLong && (maLong - maShort) * Point >= 200 * Point);
-}
+   double adxM15 = GetIndicatorValue("ADX", PERIOD_M15);
+   double rsiM15 = GetIndicatorValue("RSI", PERIOD_M15);
+   double maShortM15 = GetIndicatorValue("MA_Short", PERIOD_M15);
+   double maLongM15 = GetIndicatorValue("MA_Long", PERIOD_M15);
 
-//+------------------------------------------------------------------+
-//| Fungsi untuk menghitung Stop Loss & Take Profit                 |
-//+------------------------------------------------------------------+
-double CalculateStopLoss() { return atr * 2; }   // SL = 2x ATR
-double CalculateTakeProfit() { return atr * 4; } // TP = 4x ATR
+   double maShortH1 = GetIndicatorValue("MA_Short", PERIOD_H1);
+   double maLongH1 = GetIndicatorValue("MA_Long", PERIOD_H1);
+
+   return (adxM15 > ADX_Threshold && rsiM15 > RSI_Buy_Level && 
+           maShortM15 < maLongM15 && maShortH1 < maLongH1);
+}
 
 //+------------------------------------------------------------------+
 //| Fungsi untuk membuka posisi trade                               |
 //+------------------------------------------------------------------+
 void OpenTrade() {
-   GetIndicators(); // Ambil data indikator
-   double sl = CalculateStopLoss();
-   double tp = CalculateTakeProfit();
+   double atr = GetIndicatorValue("ATR", PERIOD_M15);
+   double sl = atr * 2;
+   double tp = atr * 4;
+   double lotSize = CalculateLotSize(sl);
 
-   if (CheckBuySignal()) {
-      trade.Buy(LotSize, Symbol(), 0, sl, tp, "BUY XAUUSD");
+   if (CheckBuySignal() && PositionsTotal() == 0) {
+      trade.Buy(lotSize, Symbol(), 0, sl, tp, "BUY XAUUSD");
    }
-   if (CheckSellSignal()) {
-      trade.Sell(LotSize, Symbol(), 0, sl, tp, "SELL XAUUSD");
-   }
-}
-
-//+------------------------------------------------------------------+
-//| Fungsi untuk mengaktifkan Trailing Stop                         |
-//+------------------------------------------------------------------+
-void ApplyTrailingStop() {
-   for (int i = PositionsTotal() - 1; i >= 0; i--) {
-      ulong ticket = PositionGetTicket(i);
-      double currentPrice = PositionGetDouble(POSITION_PRICE_OPEN);
-      double stopLoss = PositionGetDouble(POSITION_SL);
-      double newStopLoss = 0;
-
-      if (PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY) {
-         newStopLoss = currentPrice - (atr * 1.5);
-         if (newStopLoss > stopLoss) trade.PositionModify(ticket, newStopLoss, 0);
-      } else if (PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_SELL) {
-         newStopLoss = currentPrice + (atr * 1.5);
-         if (newStopLoss < stopLoss) trade.PositionModify(ticket, newStopLoss, 0);
-      }
+   if (CheckSellSignal() && PositionsTotal() == 0) {
+      trade.Sell(lotSize, Symbol(), 0, sl, tp, "SELL XAUUSD");
    }
 }
 
 //+------------------------------------------------------------------+
-//| Fungsi untuk mengecek drawdown                                  |
+//| Fungsi untuk mengecek Max Drawdown                              |
 //+------------------------------------------------------------------+
 bool CheckMaxDrawdown() {
    double equity = AccountEquity();
@@ -105,25 +104,13 @@ bool CheckMaxDrawdown() {
 //| Fungsi utama EA                                                 |
 //+------------------------------------------------------------------+
 void OnTick() {
-   GetIndicators(); // Ambil data indikator
-
-   // Cek drawdown sebelum eksekusi trading
    if (CheckMaxDrawdown()) {
       Print("Max drawdown tercapai! EA berhenti trading.");
       return;
    }
 
-   // Cek apakah ada posisi yang sudah terbuka
-   int totalOrders = PositionsTotal();
-   
-   // Jika tidak ada posisi terbuka, cari sinyal baru
-   if (totalOrders == 0) {
+   if (PositionsTotal() == 0) {
       OpenTrade();
-   }
-   
-   // Jika Trailing Stop diaktifkan, jalankan fungsinya
-   if (UseTrailingStop) {
-      ApplyTrailingStop();
    }
 }
 
@@ -132,6 +119,6 @@ void OnTick() {
 //+------------------------------------------------------------------+
 int OnInit() {
    AccountStartBalance = AccountBalance();
-   Print("EA XAUUSD dimulai! Balance awal: ", AccountStartBalance);
+   Print("EA XAUUSD Optimal dimulai! Balance awal: ", AccountStartBalance);
    return INIT_SUCCEEDED;
 }
